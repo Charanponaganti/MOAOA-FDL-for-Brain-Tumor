@@ -1,100 +1,112 @@
 import cv2
 import numpy as np
 import os
+from scipy import ndimage
 
-# 📁 Folders
-input_folder = "archive/no"
-mask_folder = "archive/mask_no"
-stripped_folder = "archive/strip_no"
+input_folder   = "archive/yes"
+mask_folder    = "archive/mask_yes"
+stripped_folder = "archive/strip_yes"
 
 os.makedirs(mask_folder, exist_ok=True)
 os.makedirs(stripped_folder, exist_ok=True)
 
-# 🔁 Loop through images
-for filename in os.listdir(input_folder):
 
+def skull_strip(img):
+    # ---------- 1. HEAD MASK ----------
+    blur = cv2.GaussianBlur(img, (5, 5), 0)
+
+    _, thresh = cv2.threshold(
+        blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, k, iterations=3)
+
+    contours, _ = cv2.findContours(
+        thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if not contours:
+        return None
+
+    head_mask = np.zeros_like(img)
+    cv2.drawContours(
+        head_mask,
+        [max(contours, key=cv2.contourArea)],
+        -1,
+        255,
+        -1
+    )
+
+    # Fill holes
+    head_mask = ndimage.binary_fill_holes(head_mask > 0).astype(np.uint8) * 255
+
+    # ---------- 2. DISTANCE TRANSFORM ----------
+    dist = cv2.distanceTransform(head_mask, cv2.DIST_L2, 5)
+
+    # Normalize distance
+    dist_norm = dist / (dist.max() + 1e-5)
+
+    # ---------- 3. SAFE BRAIN CORE ----------
+    # Keep only deep region (remove skull zone)
+    core = (dist_norm > 0.25).astype(np.uint8) * 255
+
+    # ---------- 4. EXPAND BACK (CONTROLLED GROWTH) ----------
+    # Grow region but avoid skull
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    brain_mask = cv2.dilate(core, kernel, iterations=3)
+
+    # ---------- 5. INTERSECT WITH HEAD ----------
+    brain_mask = cv2.bitwise_and(brain_mask, head_mask)
+
+    # ---------- 6. REMOVE THIN SKULL REMNANTS ----------
+    # Erode slightly to remove bright boundary skull
+    brain_mask = cv2.erode(brain_mask, kernel, iterations=1)
+
+    # ---------- 7. FILL HOLES (VERY IMPORTANT) ----------
+    brain_mask = ndimage.binary_fill_holes(brain_mask > 0).astype(np.uint8) * 255
+
+    # ---------- 8. KEEP LARGEST COMPONENT ----------
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(brain_mask)
+
+    if num_labels > 1:
+        largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+        clean = np.zeros_like(brain_mask)
+        clean[labels == largest] = 255
+        brain_mask = clean
+
+    # ---------- 9. FINAL SMOOTH ----------
+    brain_mask = cv2.GaussianBlur(brain_mask, (5, 5), 0)
+    _, brain_mask = cv2.threshold(brain_mask, 127, 255, cv2.THRESH_BINARY)
+
+    return brain_mask
+
+
+for filename in os.listdir(input_folder):
     if not filename.lower().endswith((".png", ".jpg", ".jpeg")):
         continue
 
-    img_path = os.path.join(input_folder, filename)
-    img = cv2.imread(img_path, 0)
+    img = cv2.imread(os.path.join(input_folder, filename), 0)
 
     if img is None:
-        print(f"❌ Failed to load: {filename}")
+        print(f"❌ Failed: {filename}")
         continue
 
     try:
-        # 1️⃣ CLAHE
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        enhanced = clahe.apply(img)
+        mask = skull_strip(img)
 
-        # 2️⃣ Threshold (Otsu)
-        _, thresh = cv2.threshold(
-            enhanced, 0, 255,
-            cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-        )
-
-        # 3️⃣ Morphological cleaning
-        kernel_small = np.ones((5,5), np.uint8)
-        opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_small)
-        closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel_small)
-
-        # 4️⃣ Largest component (initial brain region)
-        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(closing)
-
-        if len(stats) <= 1:
-            print(f"⚠️ Skipping (no components): {filename}")
+        if mask is None:
+            print(f"⚠️ No contour: {filename}")
             continue
 
-        largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+        result = cv2.bitwise_and(img, img, mask=mask)
 
-        brain_mask = np.zeros_like(closing)
-        brain_mask[labels == largest_label] = 255
+        cv2.imwrite(os.path.join(mask_folder, filename), mask)
+        cv2.imwrite(os.path.join(stripped_folder, filename), result)
 
-        # 5️⃣ Invert mask
-        brain_mask = 255 - brain_mask
-
-        # 🔥 6️⃣ Distance Transform (adaptive)
-        dist = cv2.distanceTransform(brain_mask, cv2.DIST_L2, 5)
-
-        thresh_val = 0.3 * dist.max()   # adaptive threshold
-        _, brain_mask = cv2.threshold(dist, thresh_val, 255, cv2.THRESH_BINARY)
-        brain_mask = brain_mask.astype("uint8")
-
-        # 🛑 Fallback if mask too small
-        if np.sum(brain_mask) < 5000:
-            print(f"⚠️ Weak mask, fallback used: {filename}")
-            brain_mask = closing
-
-        # 7️⃣ Smooth edges
-        brain_mask = cv2.GaussianBlur(brain_mask, (5,5), 0)
-        _, brain_mask = cv2.threshold(brain_mask, 127, 255, cv2.THRESH_BINARY)
-
-        # 8️⃣ Largest component again (final cleanup)
-        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(brain_mask)
-
-        if len(stats) <= 1:
-            print(f"⚠️ Skipping after refinement: {filename}")
-            continue
-
-        largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-
-        clean_mask = np.zeros_like(brain_mask)
-        clean_mask[labels == largest_label] = 255
-
-        # 9️⃣ Apply mask
-        result = cv2.bitwise_and(img, img, mask=clean_mask)
-
-        # 🔟 Save outputs
-        mask_path = os.path.join(mask_folder, filename)
-        stripped_path = os.path.join(stripped_folder, filename)
-
-        cv2.imwrite(mask_path, clean_mask)
-        cv2.imwrite(stripped_path, result)
-
-        print(f"✅ Processed: {filename}")
+        print(f"✅ {filename}")
 
     except Exception as e:
-        print(f"❌ Error processing {filename}: {e}")
+        print(f"❌ {filename}: {e}")
 
-print("🎉 All images processed successfully!")
+print("🎉 Done!")
