@@ -1,5 +1,4 @@
-outputs
-data
+
 .venv
 venv
 src/preprocessing/__pycache__
