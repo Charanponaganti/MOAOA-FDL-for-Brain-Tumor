@@ -34,9 +34,19 @@ optimisation/
 │       ├── feature_extraction.py # MobileNet + EfficientNet feature fusion
 │       ├── classifier.py         # AOA + LSTM classification
 │       └── results.py            # Plots and metrics
-|   |__preprocessing/
-       |__
-       |
+|   └── preprocessing/
+|       ├── augmentation.py       # Rotating images
+|       ├── clahe.py              #Contrast enhancement
+|       ├── preprocess.py         # Resizing
+|       ├── process_all.py        # Entire preprocessing can be done 
+|       └── skull_scraping.py     # Removing the skull
+|   └── segmentation/
+|       ├── entropy.py            # Shannon Entropy
+|       └── tumor_extraction.py   # Extracting Tumour for future visualisations
+|
+|   └── utils/
+|       └──visualize.py           # visualisation
+|    
 ├── venv/                   # Python virtual environment
 └── README.md
 ```
