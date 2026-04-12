@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import os
 import torch
+import torch.nn as nn
 import torchvision.transforms as transforms
 from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
 import timm
@@ -14,26 +15,121 @@ print(f"Using device: {device}")
 
 
 # ---------------------------------------------------------
-# Build MobileNet + EfficientNet feature extractors
+# Dense Multi-layer MobileNet-V2 Feature Extractor
+# Paper: "MobileNet" — using MobileNet-V2 (citation [4])
+# Extracts AvgPool from ALL 19 layers + MaxPool from deep
+# stages to match the paper's fused dimension of ~7835.
+# Output: 4716-d feature vector per image
+# ---------------------------------------------------------
+class MobileNetV2MultiLayer(nn.Module):
+    """Extract features from ALL layers of MobileNet-V2.
+
+    AvgPool from all 19 convolutional layers:
+        Layer  0: 32    Layer  7: 64    Layer 14: 160
+        Layer  1: 16    Layer  8: 64    Layer 15: 160
+        Layer  2: 24    Layer  9: 64    Layer 16: 160
+        Layer  3: 24    Layer 10: 64    Layer 17: 320
+        Layer  4: 32    Layer 11: 96    Layer 18: 1280
+        Layer  5: 32    Layer 12: 96
+        Layer  6: 32    Layer 13: 96
+        AvgPool subtotal: 2836
+
+    MaxPool from deep stages [3, 13, 16, 17, 18]:
+        24 + 96 + 160 + 320 + 1280 = 1880
+        MaxPool subtotal: 1880
+
+    Total: 4716
+    """
+    MAXPOOL_LAYERS = {3, 13, 16, 17, 18}
+
+    def __init__(self):
+        super().__init__()
+        mob = mobilenet_v2(weights=MobileNet_V2_Weights.IMAGENET1K_V1)
+        self.features = mob.features
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
+
+    def forward(self, x):
+        outputs = []
+        for i, layer in enumerate(self.features):
+            x = layer(x)
+            outputs.append(self.avg_pool(x).flatten(1))
+            if i in self.MAXPOOL_LAYERS:
+                outputs.append(self.max_pool(x).flatten(1))
+        return torch.cat(outputs, dim=1)  # (batch, 4716)
+
+
+# ---------------------------------------------------------
+# Dense Multi-layer EfficientNet-B0 Feature Extractor
+# Paper: "EfficientNet-B0" as described in Section 3.4
+# Extracts AvgPool from conv_stem, ALL 16 individual
+# sub-blocks within the 7 stages, and conv_head.
+# Output: 3120-d feature vector per image
+# ---------------------------------------------------------
+class EfficientNetB0MultiLayer(nn.Module):
+    """Extract features from ALL sub-blocks of EfficientNet-B0.
+
+    Instead of only extracting from 7 stage endpoints, this
+    extracts from each individual MBConv block within stages:
+
+        conv_stem:      32
+        blocks[0][0]:   16
+        blocks[1][0-1]: 24, 24
+        blocks[2][0-1]: 40, 40
+        blocks[3][0-2]: 80, 80, 80
+        blocks[4][0-2]: 112, 112, 112
+        blocks[5][0-3]: 192, 192, 192, 192
+        blocks[6][0]:   320
+        conv_head:      1280
+        Total: 3120
+    """
+    def __init__(self):
+        super().__init__()
+        model = timm.create_model("efficientnet_b0", pretrained=True)
+        self.conv_stem = model.conv_stem
+        self.bn1 = model.bn1
+        self.blocks = model.blocks
+        self.conv_head = model.conv_head
+        self.bn2 = model.bn2
+        self.pool = nn.AdaptiveAvgPool2d(1)
+
+    def forward(self, x):
+        outputs = []
+        # Stem: conv + BN/activation -> 32 channels
+        x = self.bn1(self.conv_stem(x))
+        outputs.append(self.pool(x).flatten(1))
+        # ALL individual sub-blocks (16 total across 7 stages)
+        for stage in self.blocks:
+            for block in stage:
+                x = block(x)
+                outputs.append(self.pool(x).flatten(1))
+        # Head: conv + BN/activation -> 1280 channels
+        x = self.bn2(self.conv_head(x))
+        outputs.append(self.pool(x).flatten(1))
+        return torch.cat(outputs, dim=1)  # (batch, 3120)
+
+
+# ---------------------------------------------------------
+# Build feature extractors
 # ---------------------------------------------------------
 def build_models():
-    # MobileNet V2 - remove classifier head
-    mob = mobilenet_v2(weights=MobileNet_V2_Weights.IMAGENET1K_V1)
-    mob.classifier = torch.nn.Identity()  # remove final FC
-    mob = mob.to(device).eval()
+    mob = MobileNetV2MultiLayer().to(device).eval()
+    eff = EfficientNetB0MultiLayer().to(device).eval()
 
-    # EfficientNet-B0 via timm
-    eff = timm.create_model("efficientnet_b0", pretrained=True, num_classes=0)  # num_classes=0 = no head
-    eff = eff.to(device).eval()
-
-    print(f"MobileNet output features  : {mob(torch.zeros(1,3,224,224).to(device)).shape}")
-    print(f"EfficientNet output features: {eff(torch.zeros(1,3,224,224).to(device)).shape}")
+    # Verify output dimensions
+    dummy = torch.zeros(1, 3, 224, 224).to(device)
+    with torch.no_grad():
+        mob_out = mob(dummy).shape[1]
+        eff_out = eff(dummy).shape[1]
+    print(f"MobileNet-V2 multi-layer features  : {mob_out}-d")
+    print(f"EfficientNet-B0 multi-layer features: {eff_out}-d")
+    print(f"Fused feature dimension             : {mob_out + eff_out}-d")
 
     return mob, eff
 
 
 # ---------------------------------------------------------
-# Image transform
+# Image transform (ImageNet normalization)
 # ---------------------------------------------------------
 transform = transforms.Compose([
     transforms.ToPILImage(),
@@ -49,7 +145,7 @@ def preprocess_image(img_path):
     if img is None:
         return None
 
-    # Grayscale -> RGB
+    # Grayscale -> RGB (3-channel for pretrained models)
     img_rgb = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
 
     # Apply transform -> tensor (1, 3, 224, 224)
@@ -59,10 +155,12 @@ def preprocess_image(img_path):
 
 # ---------------------------------------------------------
 # Entropy-based feature selection
+# Paper: "Entropy is exploited for choosing 1186 score-based
+# features from the fused feature vector"
 # ---------------------------------------------------------
 def entropy_feature_selection(features, n_select=1186):
     """
-    Select top n_select features based on Shannon entropy score
+    Select top n_select features based on Shannon entropy score.
     features: (n_samples, n_features)
     """
     n_bins = 50
@@ -113,11 +211,11 @@ def extract_features(input_dir, output_dir, labels=("yes", "no"), n_select=1186)
                 continue
 
             with torch.no_grad():
-                mob_feat = mob_model(tensor).cpu().numpy().flatten()  # 1280-d
-                eff_feat = eff_model(tensor).cpu().numpy().flatten()  # 1280-d
+                mob_feat = mob_model(tensor).cpu().numpy().flatten()  # 4716-d
+                eff_feat = eff_model(tensor).cpu().numpy().flatten()  # 3120-d
 
-            # Fuse by concatenation
-            fused = np.concatenate([mob_feat, eff_feat])
+            # Fuse by concatenation (paper Section 3.4)
+            fused = np.concatenate([mob_feat, eff_feat])  # 7836-d (~paper's 7835)
             all_features.append(fused)
             all_labels.append(label_idx)
 
@@ -129,7 +227,7 @@ def extract_features(input_dir, output_dir, labels=("yes", "no"), n_select=1186)
 
     print(f"\nFull fused feature matrix : {all_features.shape}")
 
-    # Entropy-based feature selection
+    # Entropy-based feature selection (paper: 1186 from total)
     print(f"Selecting top {n_select} features via entropy...")
     selected_features, selected_indices = entropy_feature_selection(all_features, n_select)
     print(f"Selected feature matrix   : {selected_features.shape}")
@@ -139,7 +237,7 @@ def extract_features(input_dir, output_dir, labels=("yes", "no"), n_select=1186)
     np.save(os.path.join(output_dir, "labels.npy"),   all_labels)
     np.save(os.path.join(output_dir, "indices.npy"),  selected_indices)
 
-    print(f"\nSaved to '{output_dir}' ✅")
+    print(f"\nSaved to '{output_dir}' [OK]")
     return selected_features, all_labels
 
 
@@ -147,9 +245,12 @@ def extract_features(input_dir, output_dir, labels=("yes", "no"), n_select=1186)
 # MAIN
 # ---------------------------------------------------------
 if __name__ == "__main__":
+    # Get the project root directory (2 levels up from src/models/)
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    
     extract_features(
-        input_dir  = "data/segmented_multi",
-        output_dir = "data/features",
+        input_dir  = os.path.join(base_dir, "data/segmented_multi"),
+        output_dir = os.path.join(base_dir, "data/features"),
         labels     = ("yes", "no"),
         n_select   = 1186
     )

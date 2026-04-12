@@ -10,15 +10,23 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 import os
 
-os.makedirs("data/results", exist_ok=True)
+base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+results_dir = os.path.join(base_dir, "data/results")
+os.makedirs(results_dir, exist_ok=True)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# ---------------------------------------------------------
+# Constants (must match classifier.py)
+# ---------------------------------------------------------
+SEQ_LEN     = 2
+HIDDEN_SIZE = 128
 
 # ---------------------------------------------------------
 # LSTM Model (same as classifier.py)
 # ---------------------------------------------------------
 class LSTMClassifier(nn.Module):
-    def __init__(self, input_size, hidden_size=128, num_layers=2, num_classes=2, dropout=0.5):
+    def __init__(self, input_size, hidden_size=HIDDEN_SIZE, num_layers=2, num_classes=2, dropout=0.5):
         super(LSTMClassifier, self).__init__()
         self.lstm = nn.LSTM(input_size=input_size,
                             hidden_size=hidden_size,
@@ -36,8 +44,8 @@ class LSTMClassifier(nn.Module):
 # ---------------------------------------------------------
 # Load data and model
 # ---------------------------------------------------------
-X = np.load("data/features/features.npy")
-y = np.load("data/features/labels.npy")
+X = np.load(os.path.join(base_dir, "data/features/features.npy"))
+y = np.load(os.path.join(base_dir, "data/features/labels.npy"))
 
 scaler = StandardScaler()
 X = scaler.fit_transform(X)
@@ -48,24 +56,30 @@ X_train, X_test, y_train, y_test = train_test_split(
 X_tr, X_val, y_tr, y_val = train_test_split(
     X_train, y_train, test_size=0.15, random_state=42, stratify=y_train)
 
+# LSTM reshaping: split features into SEQ_LEN timesteps
+n_features = X_train.shape[1]
+input_size = n_features // SEQ_LEN
+
 def to_tensor(X, y):
-    return (torch.tensor(X, dtype=torch.float32).unsqueeze(1).to(device),
-            torch.tensor(y, dtype=torch.long).to(device))
+    Xt = torch.tensor(X[:, :SEQ_LEN * input_size], dtype=torch.float32)
+    Xt = Xt.reshape(-1, SEQ_LEN, input_size).to(device)
+    yt = torch.tensor(y, dtype=torch.long).to(device)
+    return Xt, yt
 
 X_tr_t,  y_tr_t  = to_tensor(X_tr,  y_tr)
 X_test_t, y_test_t = to_tensor(X_test, y_test)
 
-input_size  = X_train.shape[1]
-best_hidden = 256
-best_lr     = 0.005942764811103134
-best_batch  = 46
+# Best hyperparameters — update these after re-running classifier.py
+best_lr = 0.00601250713516592
+best_batch = 34
+best_epochs = 390
 
 # ---------------------------------------------------------
 # Retrain and record loss/accuracy per epoch
 # ---------------------------------------------------------
 print("Retraining to record curves...")
 
-model     = LSTMClassifier(input_size=input_size, hidden_size=best_hidden).to(device)
+model     = LSTMClassifier(input_size=input_size).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=best_lr)
 criterion = nn.CrossEntropyLoss()
 
@@ -77,7 +91,7 @@ train_accs   = []
 val_losses   = []
 val_accs     = []
 
-for epoch in range(1, 101):
+for epoch in range(1, best_epochs + 1):
     # --- Train ---
     model.train()
     total_loss = 0
@@ -110,7 +124,7 @@ for epoch in range(1, 101):
     val_accs.append(val_acc)
 
     if epoch % 10 == 0:
-        print(f"  Epoch {epoch:03d}/100 | "
+        print(f"  Epoch {epoch:03d}/{best_epochs} | "
               f"Train Loss: {train_losses[-1]:.4f} | "
               f"Val Loss: {val_loss:.4f} | "
               f"Val Acc: {val_acc*100:.2f}%")
@@ -149,7 +163,7 @@ print("Saved: loss_curve.png")
 
 
 # ---------------------------------------------------------
-# 3. Confusion Matrix
+# 3. Confusion Matrix + Compute actual metrics
 # ---------------------------------------------------------
 cm = confusion_matrix(y_test, val_pred)
 
@@ -161,20 +175,35 @@ plt.xlabel("Predicted")
 plt.ylabel("Actual")
 plt.title("Confusion Matrix")
 plt.tight_layout()
-plt.savefig("data/results/confusion_matrix.png", dpi=150)
+plt.savefig(os.path.join(results_dir, "confusion_matrix.png"), dpi=150)
 plt.close()
 print("Saved: confusion_matrix.png")
+
+# Compute our actual metrics from the model
+import csv
+from sklearn.metrics import f1_score, matthews_corrcoef, cohen_kappa_score
+
+tn, fp, fn, tp = cm.ravel()
+sensitivity_val = tp / (tp + fn + 1e-8)
+specificity_val = tn / (tn + fp + 1e-8)
+f1    = f1_score(y_test, val_pred, average="weighted")
+mcc   = matthews_corrcoef(y_test, val_pred)
+kappa = cohen_kappa_score(y_test, val_pred)
+acc   = (val_pred == y_test).mean()
 
 
 # ---------------------------------------------------------
 # 4. Sensitivity & Specificity Comparison Bar Chart
+# MOAOA-FDL = our actual results; others from paper Table 2
 # ---------------------------------------------------------
 methods     = ["MOAOA-FDL", "SVM-KP", "SVM-RBF", "Decision Tree",
                "CART", "Random Forest", "k-NN", "Linear SVM"]
-sensitivity = [95.77,       94.73,    95.62,     97.88,
-               88.00,        96.00,   80.00,      96.00]
-specificity = [96.97,        97.59,   83.71,      91.71,
-               80.00,        80.00,   80.00,      80.00]
+sensitivity = [round(sensitivity_val * 100, 2),
+                            94.73,    95.62,     97.88,
+               88.00,       96.00,    80.00,     96.00]
+specificity = [round(specificity_val * 100, 2),
+                            97.59,    83.71,     91.71,
+               80.00,       80.00,    80.00,     80.00]
 
 x     = np.arange(len(methods))
 width = 0.35
@@ -190,15 +219,17 @@ ax.set_xticklabels(methods, rotation=20, ha="right")
 ax.set_ylim(70, 105)
 ax.legend()
 plt.tight_layout()
-plt.savefig("data/results/sensitivity_specificity.png", dpi=150)
+plt.savefig(os.path.join(results_dir, "sensitivity_specificity.png"), dpi=150)
 plt.close()
 print("Saved: sensitivity_specificity.png")
 
 
 # ---------------------------------------------------------
 # 5. Accuracy Comparison Bar Chart
+# MOAOA-FDL = our actual accuracy; others from paper Table 2
 # ---------------------------------------------------------
-acc_values = [95.77, 96.18, 89.88, 94.95, 84.00, 88.00, 80.00, 88.00]
+acc_values = [round(acc * 100, 2),
+              96.18, 89.88, 94.95, 84.00, 88.00, 80.00, 88.00]
 
 fig, ax = plt.subplots(figsize=(10, 6))
 colors = ["steelblue"] + ["orange"] * (len(methods) - 1)
@@ -212,7 +243,7 @@ for i, v in enumerate(acc_values):
     ax.text(i, v + 0.5, f"{v}%", ha="center", fontsize=9)
 
 plt.tight_layout()
-plt.savefig("data/results/accuracy_comparison.png", dpi=150)
+plt.savefig(os.path.join(results_dir, "accuracy_comparison.png"), dpi=150)
 plt.close()
 print("Saved: accuracy_comparison.png")
 
@@ -220,18 +251,6 @@ print("Saved: accuracy_comparison.png")
 # ---------------------------------------------------------
 # 6. Save metrics to CSV
 # ---------------------------------------------------------
-import csv
-
-tn, fp, fn, tp = cm.ravel()
-sensitivity_val = tp / (tp + fn + 1e-8)
-specificity_val = tn / (tn + fp + 1e-8)
-
-from sklearn.metrics import f1_score, matthews_corrcoef, cohen_kappa_score
-f1    = f1_score(y_test, val_pred, average="weighted")
-mcc   = matthews_corrcoef(y_test, val_pred)
-kappa = cohen_kappa_score(y_test, val_pred)
-acc   = (val_pred == y_test).mean()
-
 metrics = {
     "Accuracy"   : f"{acc*100:.2f}%",
     "Sensitivity": f"{sensitivity_val*100:.2f}%",
@@ -241,7 +260,7 @@ metrics = {
     "Kappa"      : f"{kappa:.4f}",
 }
 
-with open("data/results/metrics.csv", "w", newline="") as f:
+with open(os.path.join(results_dir, "metrics.csv"), "w", newline="") as f:
     writer = csv.writer(f)
     writer.writerow(["Metric", "Value"])
     for k, v in metrics.items():

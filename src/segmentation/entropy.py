@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import os
 
 # ---------------------------------------------------------
 # Shannon entropy
@@ -81,9 +82,9 @@ class AOA_Multi:
             # Acceleration update
             if TF <= 0.5:
                 mr = rng.integers(0, self.n, self.n)
-                acc = (den[mr] * vol[mr] * acc[mr]) / (den * vol)
+                acc = (den[mr] * vol[mr] * acc[mr]) / (den * vol + 1e-8)
             else:
-                acc = (den[best_idx] * vol[best_idx] * acc[best_idx]) / (den * vol)
+                acc = (den[best_idx] * vol[best_idx] * acc[best_idx]) / (den * vol + 1e-8)
 
             # Normalize acceleration
             a_min, a_max = acc.min(), acc.max()
@@ -141,7 +142,6 @@ def segment_multi(img, n_thresholds=3):
         segmented[mask] = intensity_values[i]
 
     return segmented, thresholds
-import os
 
 def segment_dataset_multi(input_dir, output_dir, labels=("yes", "no"), n_thresholds=3):
     for label in labels:
@@ -166,13 +166,14 @@ def segment_dataset_multi(input_dir, output_dir, labels=("yes", "no"), n_thresho
             cv2.imwrite(os.path.join(out_path, out_fname), segmented)
 
             print(f"[{i}/{len(files)}] {fname} -> {thresholds}")
-import os
 if __name__ == "__main__":
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    
     segment_dataset_multi(
-        input_dir="data/augmented",
-        output_dir="data/segmented_multi",
+        input_dir=os.path.join(base_dir, "data/augmented"),
+        output_dir=os.path.join(base_dir, "data/segmented_multi"),
         labels=("yes", "no"),
         n_thresholds=3
     )
 
-    print("Done ✅")
+    print("Done [OK]")

@@ -170,12 +170,12 @@ Run each script in order from the project root:
 
 ### Step 1 — Segmentation
 ```bash
-python src/models/entropy.py
+python src/segmentation/entropy.py
 ```
 
 ### Step 2 — Tumor Extraction
 ```bash
-python src/models/tumor_extraction.py
+python src/segmentation/tumor_extraction.py
 ```
 
 ### Step 3 — Feature Extraction

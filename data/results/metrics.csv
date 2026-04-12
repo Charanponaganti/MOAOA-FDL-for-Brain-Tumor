@@ -1,7 +1,7 @@
 Metric,Value
-Accuracy,95.50%
-Sensitivity,97.28%
-Specificity,94.37%
-F-Score,95.52%
-MCC,0.9075
-Kappa,0.9064
+Accuracy,94.97%
+Sensitivity,93.88%
+Specificity,95.67%
+F-Score,94.98%
+MCC,0.8944
+Kappa,0.8944
