@@ -274,4 +274,3 @@ if __name__ == "__main__":
 
     torch.save(m.state_dict(), "data/features/lstm_model.pth")
     print("Done.")
-el.pth")
