@@ -10,9 +10,9 @@ import timm
 #use gpu if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Extract features from mobilenet
+# Extract features from mobilenet 1st modell
 class MobFeats(nn.Module):
-    # Layers: 3, 13, 16, 17, 18
+   
     layers_to_pool = {3, 13, 16, 17, 18}
 
     def __init__(self):
@@ -32,7 +32,7 @@ class MobFeats(nn.Module):
         return torch.cat(res, dim=1)
 
 
-# Extract features from efficientnet
+# Extract features from efficientnet 2nd mosel
 class EffFeats(nn.Module):
     def __init__(self):
         super().__init__()

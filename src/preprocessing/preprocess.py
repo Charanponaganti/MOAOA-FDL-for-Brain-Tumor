@@ -30,7 +30,7 @@ def preprocess(img, size=(224,224)):
     if img is None:
         return None
 
-    img = crop_to_brain(img)     # 🔥 add this
+    img = crop_to_brain(img)    
 
     img = cv2.resize(img, size)  # resize again
     img = img / 255.0

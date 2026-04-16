@@ -2,6 +2,9 @@ import cv2
 import numpy as np
 from scipy import ndimage
 
+
+#We used a differnt logic for skull scraping 
+
 def skull_strip(img):
     # make sure its gray
     if len(img.shape) == 3:
@@ -52,4 +55,4 @@ def skull_strip(img):
 
     # finally masked image!!
     res = cv2.bitwise_and(img, img, mask=bm)
-    return res
+    return res
