@@ -4,9 +4,9 @@ import os
 print("--- LOADER SCRIPT ---")
 
 # load the features we saved
-f = np.load("data/features/features.npy")
-l = np.load("data/features/labels.npy")
-idx = np.load("data/features/indices.npy")
+f = np.load("data/outputs/features/features.npy")
+l = np.load("data/outputs/features/labels.npy")
+idx = np.load("data/outputs/features/indices.npy")
 
 print("Features shape: ", f.shape)
 print("Labels shape  : ", l.shape)

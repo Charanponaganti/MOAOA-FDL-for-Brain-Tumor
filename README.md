@@ -28,21 +28,32 @@ Opti-Project/
 │       ├── accuracy_comparison.png
 │       └── metrics.csv
 ├── src/
+│   ├── classification/
+│   │   └── models/
+│   │       ├── classifier.py         # AOA + LSTM classification
+│   │       └── lstm.py               # LSTM model architecture
+│   ├── feature_extraction/
+│   │   └── extractors/
+│   │       └── feature_extraction.py # MobileNet + EfficientNet feature fusion
+│   ├── performance/
+│   │   └── evaluation/
+│   │       └── results.py            # Plots and metrics
 │   ├── preprocessing/
-│   │   ├── augmentation.py       # Rotating images
-│   │   ├── clahe.py              # Contrast enhancement
-│   │   ├── preprocess.py         # Resizing
-│   │   ├── process_all.py        # Pipeline entry for preprocessing
-│   │   └── skull_scraping.py     # Removing the skull
-│   ├── segmentation/
-│   │   ├── entropy.py            # AOA + Shannon multi-threshold segmentation
-│   │   └── tumor_extraction.py   # Tumor region extraction
-│   ├── models/
-│   │   ├── feature_extraction.py # MobileNet + EfficientNet feature fusion
-│   │   ├── classifier.py         # AOA + LSTM classification
-│   │   └── results.py            # Plots and metrics
-│   └── utils/
-│       └── visualize.py          # Visualization utilities
+│   │   ├── pipeline/
+│   │   │   └── process_all.py        # Pipeline entry for preprocessing
+│   │   └── techniques/
+│   │       ├── augmentation.py       # Rotating images
+│   │       ├── clahe.py              # Contrast enhancement
+│   │       ├── preprocess.py         # Resizing
+│   │       └── skull_scraping.py     # Removing the skull
+│   └── segmentation/
+│       ├── algorithms/
+│       │   └── entropy.py            # AOA + Shannon multi-threshold segmentation
+│       └── extraction/
+│           └── tumor_extraction.py   # Tumor region extraction
+├── notebooks/
+│   └── performance/
+│       └── results.ipynb   # Visualization notebooks
 ├── main.py                 # Feature loading and verification script
 ├── requirements.txt        # Project dependencies
 └── README.md
@@ -55,22 +66,22 @@ Opti-Project/
 ```
 Input MRI Images
       ↓
-Image Preprocessing (src/preprocessing/)
+Image Preprocessing (src/preprocessing/pipeline/process_all.py)
 (CLAHE + Skull Stripping + Augmentation)
       ↓
-Image Segmentation (src/segmentation/entropy.py)
+Image Segmentation (src/segmentation/algorithms/entropy.py)
 (AOA + Shannon Entropy Multi-level Thresholding)
       ↓
-Tumor Extraction (src/segmentation/tumor_extraction.py)
+Tumor Extraction (src/segmentation/extraction/tumor_extraction.py)
 (Morphological Operations + Largest Contour)
       ↓
-Feature Extraction (src/models/feature_extraction.py)
+Feature Extraction (src/feature_extraction/extractors/feature_extraction.py)
 (MobileNet-V2 + EfficientNet-B0 → Fusion → Entropy Selection)
       ↓
-Classification (src/models/classifier.py)
+Classification (src/classification/models/classifier.py)
 (AOA Hyperparameter Optimization + LSTM)
       ↓
-Results & Evaluation (src/models/results.py)
+Results & Evaluation (src/performance/evaluation/results.py)
 ```
 
 ---
@@ -113,32 +124,32 @@ Run each script in order from the project root:
 
 ### Step 1 — Preprocessing
 ```bash
-python src/preprocessing/process_all.py
+python -m src.preprocessing.pipeline.process_all
 ```
 
 ### Step 2 — Segmentation
 ```bash
-python src/segmentation/entropy.py
+python -m src.segmentation.algorithms.entropy
 ```
 
 ### Step 3 — Tumor Extraction
 ```bash
-python src/segmentation/tumor_extraction.py
+python -m src.segmentation.extraction.tumor_extraction
 ```
 
 ### Step 4 — Feature Extraction
 ```bash
-python src/models/feature_extraction.py
+python -m src.feature_extraction.extractors.feature_extraction
 ```
 
 ### Step 5 — Classification
 ```bash
-python src/models/classifier.py
+python -m src.classification.models.classifier
 ```
 
 ### Step 6 — Results & Plots
 ```bash
-python src/models/results.py
+python -m src.performance.evaluation.results
 ```
 
 ---
